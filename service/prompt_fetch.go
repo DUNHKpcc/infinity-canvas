@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -84,8 +86,30 @@ func buildPromptCategory(category string) ([]model.Prompt, error) {
 	return nil, errors.New("未知提示词分类")
 }
 
+// githubRawMirror 返回 GITHUB_RAW_MIRROR 环境变量配置的镜像前缀（去掉尾部斜杠）。
+// 为空时不改变上游行为；设为如 https://ghproxy.net 可让国内服务器绕过对
+// raw.githubusercontent.com 的封锁。
+func githubRawMirror() string {
+	return strings.TrimRight(os.Getenv("GITHUB_RAW_MIRROR"), "/")
+}
+
 func fetchText(baseURL, file string) (string, error) {
-	request, _ := http.NewRequest(http.MethodGet, baseURL+"/"+file, nil)
+	// 本地模式：设了 PROMPT_LOCAL_DIR 时，直接读已克隆到本地的仓库文件，
+	// 不发任何网络请求。适合国内服务器无法访问 raw.githubusercontent.com 的场景：
+	// 把各仓库克隆到 $PROMPT_LOCAL_DIR/<user>/<repo>/<branch>/ 即可。
+	if dir := strings.TrimRight(os.Getenv("PROMPT_LOCAL_DIR"), "/"); dir != "" {
+		rel := strings.TrimPrefix(baseURL, "https://raw.githubusercontent.com")
+		data, err := os.ReadFile(filepath.Join(dir, rel, file))
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	target := baseURL + "/" + file
+	if mirror := githubRawMirror(); mirror != "" {
+		target = mirror + "/" + target
+	}
+	request, _ := http.NewRequest(http.MethodGet, target, nil)
 	client := http.Client{Timeout: 30 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
