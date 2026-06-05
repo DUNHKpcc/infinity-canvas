@@ -91,8 +91,8 @@ function LoginContent() {
                     <span
                         className="mx-auto mb-4 block size-12 bg-stone-950 dark:bg-stone-100"
                         style={{
-                            mask: "url(/logo.svg) center / contain no-repeat",
-                            WebkitMask: "url(/logo.svg) center / contain no-repeat",
+                            mask: "url(/logo-mask.png) center / contain no-repeat",
+                            WebkitMask: "url(/logo-mask.png) center / contain no-repeat",
                         }}
                         aria-label="无限画布"
                     />
