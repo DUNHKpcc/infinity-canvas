@@ -86,6 +86,52 @@
 - 提交完成后，给当前提交打最新版本号对应的 tag，例如 `v0.0.5`。
 - 发版本流程中不要执行编译、测试或构建，除非用户明确要求。
 
+## Fork 维护
+
+本仓库是 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 的 fork：
+
+- `origin` = `https://github.com/DUNHKpcc/infinity-canvas.git`（用户自己的仓库，push 目标）
+- `upstream` = `https://github.com/basketikun/infinite-canvas.git`（原作者仓库，只读，拉更新用）
+
+### 相对 upstream 的稳定改动（merge 时的全部冲突面）
+
+| 文件 | 改动内容 |
+|---|---|
+| `Dockerfile` | 3 处 `FROM` 加 `docker.m.daocloud.io/` 前缀（适配国内网络） |
+| `web/public/logo.svg` | 替换为内嵌了 alpha 处理过的 PNG 的 SVG 包装（自定义品牌） |
+| `web/src/app/favicon.ico` | 替换为自定义品牌 favicon（多尺寸 16/32/48/64/128/256） |
+| `README.md` | 标题、徽章、Render 部署链接、Star History 全部指向 fork 仓库；移除原作者赞助/社区段；新增致谢段 |
+
+**关键不变量**：所有 .tsx/.go 源码相对 upstream 零差异。新版 logo 通过单一 `/logo.svg` 提供，不要再在 .tsx 中改 logo 路径，否则会重新引入冲突面。
+
+### 同步 upstream 更新的流程
+
+```bash
+git fetch upstream
+git log HEAD..upstream/main --oneline       # 看新 commit
+git diff HEAD...upstream/main --stat        # 看影响文件
+git branch backup-$(date +%Y%m%d-%H%M)      # 打保险分支
+git merge upstream/main
+# 处理冲突后：
+git push
+```
+
+### 冲突解决规则（按上面 4 个文件）
+
+- `Dockerfile`：保留你的 `docker.m.daocloud.io/` 前缀，采纳原作者的新版本号（如 bun/golang/node 升级）
+- `web/public/logo.svg`：保留你的版本（`git checkout --ours web/public/logo.svg`）
+- `web/src/app/favicon.ico`：保留你的版本（`git checkout --ours web/src/app/favicon.ico`）
+- `README.md`：保留你的品牌段落（标题、徽章、致谢、Star History），采纳原作者新增的功能说明/部署说明段落；逐段判断
+
+### 应急回退
+
+- merge 进行中：`git merge --abort`
+- 已 commit 但想撤销：`git reset --hard backup-YYYYMMDD-HHMM`
+
+### AGPL 注意
+
+本仓库及任何派生必须保留 LICENSE 文件和对原作者的 attribution。AGPL 要求：以网络服务形式部署修改版给他人使用时，必须公开提供完整源代码下载链接。
+
 ## 项目注意事项
 
 - 当前画布项目和“我的素材”主要保存在浏览器本地，不要在文档中误写成已支持云同步。
