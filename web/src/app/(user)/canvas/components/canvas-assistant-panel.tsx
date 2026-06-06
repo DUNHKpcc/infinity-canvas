@@ -166,7 +166,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, sessions, activeS
                 const referenceImages: ReferenceImage[] = await Promise.all(
                     refs.filter((item) => item.dataUrl).map(async (item) => ({ id: item.id, name: `${item.title}.png`, type: "image/png", dataUrl: await imageToDataUrl(item), storageKey: item.storageKey })),
                 );
-                const images = referenceImages.length ? await requestEdit(requestConfig, text, referenceImages) : await requestGeneration(requestConfig, text);
+                const onPartial = (partial: { index: number; dataUrl: string }) =>
+                    updateMessage(session.id, assistantId, { images: [{ id: `partial-${partial.index}`, dataUrl: partial.dataUrl, prompt: text }], isLoading: true });
+                const images = referenceImages.length ? await requestEdit(requestConfig, text, referenceImages, undefined, onPartial) : await requestGeneration(requestConfig, text, onPartial);
                 const storedImages = await Promise.all(images.map((image) => uploadImage(image.dataUrl)));
                 updateMessage(session.id, assistantId, {
                     text: `生成了 ${storedImages.length} 张图片`,

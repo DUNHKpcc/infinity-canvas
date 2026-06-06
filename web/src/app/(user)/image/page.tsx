@@ -36,6 +36,7 @@ type GenerationResult = {
     id: string;
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
+    previewDataUrl?: string;
     error?: string;
 };
 
@@ -285,7 +286,8 @@ export default function ImagePage() {
     const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+            const onPartial = (partial: { index: number; dataUrl: string }) => setResults((value) => updateResultAt(value, index, { previewDataUrl: partial.dataUrl }));
+            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, onPartial) : await requestGeneration(snapshot.config, snapshot.text, onPartial);
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
@@ -430,7 +432,7 @@ export default function ImagePage() {
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} previewDataUrl={result.previewDataUrl} />
                                     ),
                                 )}
                             </div>
@@ -541,16 +543,20 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ previewDataUrl }: { previewDataUrl?: string }) {
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
-            <div
-                className="absolute inset-0 opacity-60"
-                style={{
-                    backgroundImage: "radial-gradient(circle, rgba(120,113,108,0.35) 1.4px, transparent 1.6px)",
-                    backgroundSize: "16px 16px",
-                }}
-            />
+            {previewDataUrl ? (
+                <img src={previewDataUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60" />
+            ) : (
+                <div
+                    className="absolute inset-0 opacity-60"
+                    style={{
+                        backgroundImage: "radial-gradient(circle, rgba(120,113,108,0.35) 1.4px, transparent 1.6px)",
+                        backgroundSize: "16px 16px",
+                    }}
+                />
+            )}
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>生成中</span>

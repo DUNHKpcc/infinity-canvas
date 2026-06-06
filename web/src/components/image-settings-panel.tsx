@@ -32,7 +32,7 @@ const aspectOptions = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count" | "streamImages" | "streamPartialImages", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -126,6 +126,26 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                         <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
                     </div>
+                </div>
+                <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                        <SettingTitle color={theme.node.muted}>流式生成</SettingTitle>
+                        <span onMouseDown={(event) => event.stopPropagation()}>
+                            <Switch size="small" checked={config.streamImages !== "false"} onChange={(checked) => onConfigChange("streamImages", checked ? "true" : "false")} />
+                        </span>
+                    </div>
+                    {config.streamImages !== "false" ? (
+                        <>
+                            <SettingTitle color={theme.node.muted}>中间步骤图像数</SettingTitle>
+                            <div className="grid grid-cols-4 gap-2.5">
+                                {["0", "1", "2", "3"].map((value) => (
+                                    <OptionPill key={value} selected={(config.streamPartialImages || "1") === value} theme={theme} onClick={() => onConfigChange("streamPartialImages", value)}>
+                                        {value}
+                                    </OptionPill>
+                                ))}
+                            </div>
+                        </>
+                    ) : null}
                 </div>
             </div>
         </ImageSettingsTheme>

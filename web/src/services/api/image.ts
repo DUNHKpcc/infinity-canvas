@@ -163,6 +163,108 @@ function parseStreamChunk(chunk: string, onDelta: (value: string) => void) {
     if (deltaText) onDelta(deltaText);
 }
 
+export type PartialImage = { index: number; dataUrl: string };
+export type OnPartialImage = (partial: PartialImage) => void;
+
+type ParsedImage = { id: string; dataUrl: string };
+type ImageStreamEvent = { kind: "partial"; index: number; dataUrl: string } | { kind: "completed"; images: ParsedImage[] } | { kind: "error"; message: string };
+
+function isStreamEnabled(config: AiConfig) {
+    return config.streamImages === "true";
+}
+
+function resolvePartialImages(config: AiConfig) {
+    const value = Math.floor(Number(config.streamPartialImages));
+    return Number.isFinite(value) ? Math.max(0, Math.min(3, value)) : 1;
+}
+
+function b64ToDataUrl(b64: string) {
+    return `data:image/png;base64,${b64}`;
+}
+
+function collectCompletedImages(payload: Record<string, unknown>): ParsedImage[] {
+    const data = (payload as { data?: Array<Record<string, unknown>> }).data;
+    if (Array.isArray(data)) {
+        return data
+            .map(resolveImageDataUrl)
+            .filter((value): value is string => Boolean(value))
+            .map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
+    if (typeof payload.b64_json === "string" && payload.b64_json) {
+        return [{ id: nanoid(), dataUrl: b64ToDataUrl(payload.b64_json) }];
+    }
+    return [];
+}
+
+/** Parse one "\n\n"-delimited SSE block from the image stream, emitting 0..n image events. */
+function parseImageStreamChunk(chunk: string, onEvent: (event: ImageStreamEvent) => void) {
+    for (const block of chunk.split("\n\n")) {
+        const data = block
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+            ?.slice(6);
+        if (!data || data === "[DONE]") continue;
+        let payload: Record<string, unknown>;
+        try {
+            payload = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+            continue;
+        }
+        const type = typeof payload.type === "string" ? payload.type : "";
+        if (type.endsWith(".error") || (typeof payload.code === "number" && payload.code !== 0) || payload.error) {
+            const message = (payload.error as { message?: string } | undefined)?.message || (typeof payload.msg === "string" ? payload.msg : "") || "生成失败";
+            onEvent({ kind: "error", message });
+            continue;
+        }
+        if (type.endsWith("partial_image") && typeof payload.b64_json === "string" && payload.b64_json) {
+            onEvent({ kind: "partial", index: Number(payload.partial_image_index ?? 0), dataUrl: b64ToDataUrl(payload.b64_json) });
+            continue;
+        }
+        if (type.endsWith("completed") || Array.isArray((payload as { data?: unknown }).data)) {
+            const images = collectCompletedImages(payload);
+            if (images.length) onEvent({ kind: "completed", images });
+        }
+    }
+}
+
+/** Run an SSE image request, forwarding partial frames and aggregating final images. */
+async function runImageStream(url: string, body: unknown, headers: Record<string, string>, onPartialImage?: OnPartialImage): Promise<ParsedImage[]> {
+    let buffer = "";
+    let processedLength = 0;
+    let sawEvent = false;
+    let streamError = "";
+    const completed: ParsedImage[] = [];
+
+    const handle = (event: ImageStreamEvent) => {
+        sawEvent = true;
+        if (event.kind === "partial") onPartialImage?.({ index: event.index, dataUrl: event.dataUrl });
+        else if (event.kind === "completed") completed.push(...event.images);
+        else streamError = event.message;
+    };
+
+    const response = await axios.post(url, body, {
+        headers,
+        responseType: "text",
+        onDownloadProgress: (event) => {
+            const responseText = String(event.event?.target?.responseText || "");
+            buffer += responseText.slice(processedLength);
+            processedLength = responseText.length;
+            const chunks = buffer.split("\n\n");
+            buffer = chunks.pop() || "";
+            for (const chunk of chunks) parseImageStreamChunk(chunk, handle);
+        },
+    });
+    if (buffer) parseImageStreamChunk(buffer, handle);
+
+    if (streamError) throw new Error(streamError);
+    if (completed.length) return completed;
+    // Fallback: upstream ignored stream and returned a plain JSON payload.
+    if (!sawEvent && typeof response.data === "string") {
+        return parseImagePayload(JSON.parse(response.data) as ImageApiResponse);
+    }
+    throw new Error("接口没有返回图片");
+}
+
 function withSystemPrompt(config: AiConfig, prompt: string) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
@@ -194,27 +296,26 @@ function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) 
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string) {
+export async function requestGeneration(config: AiConfig, prompt: string, onPartialImage?: OnPartialImage) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const stream = isStreamEnabled(config);
+    const body = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        n,
+        ...(quality ? { quality } : {}),
+        ...(requestSize ? { size: requestSize } : {}),
+        response_format: "b64_json",
+        output_format: IMAGE_OUTPUT_FORMAT,
+        ...(stream ? { stream: true, partial_images: resolvePartialImages(config) } : {}),
+    };
     try {
-        const response = await axios.post<ImageApiResponse>(
-            aiApiUrl(config, "/images/generations"),
-            {
-                model: config.model,
-                prompt: withSystemPrompt(config, prompt),
-                n,
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                response_format: "b64_json",
-                output_format: IMAGE_OUTPUT_FORMAT,
-            },
-            {
-                headers: aiHeaders(config, "application/json"),
-            },
-        );
-        const images = parseImagePayload(response.data);
+        const headers = aiHeaders(config, "application/json") as Record<string, string>;
+        const images = stream
+            ? await runImageStream(aiApiUrl(config, "/images/generations"), body, headers, onPartialImage)
+            : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), body, { headers })).data);
         refreshRemoteUser(config);
         return images;
     } catch (error) {
@@ -222,11 +323,12 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, onPartialImage?: OnPartialImage) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
+    const stream = isStreamEnabled(config);
     const formData = new FormData();
     formData.set("model", config.model);
     formData.set("prompt", withSystemPrompt(config, requestPrompt));
@@ -239,13 +341,19 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (requestSize) {
         formData.set("size", requestSize);
     }
+    if (stream) {
+        formData.set("stream", "true");
+        formData.set("partial_images", String(resolvePartialImages(config)));
+    }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append("image", file));
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) });
-        const images = parseImagePayload(response.data);
+        const headers = aiHeaders(config) as Record<string, string>;
+        const images = stream
+            ? await runImageStream(aiApiUrl(config, "/images/edits"), formData, headers, onPartialImage)
+            : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) })).data);
         refreshRemoteUser(config);
         return images;
     } catch (error) {

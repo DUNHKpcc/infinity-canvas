@@ -141,7 +141,37 @@ func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	if isEventStream(response.Header.Get("Content-Type")) {
+		streamAIResponse(w, response.Body)
+	} else {
+		_, _ = io.Copy(w, response.Body)
+	}
+}
+
+func isEventStream(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+}
+
+// streamAIResponse 以读-写-flush 循环转发 SSE，确保中间事件实时到达前端。
+func streamAIResponse(w http.ResponseWriter, body io.Reader) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		_, _ = io.Copy(w, body)
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return
+			}
+			flusher.Flush()
+		}
+		if readErr != nil {
+			return
+		}
+	}
 }
 
 func readAIRequest(r *http.Request) ([]byte, string, string, error) {
