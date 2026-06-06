@@ -36,6 +36,7 @@ export type AiConfig = {
     canvasImageCount: string;
     streamImages: string;
     streamPartialImages: string;
+    imageApiMode: string;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
@@ -70,6 +71,7 @@ export const defaultConfig: AiConfig = {
     canvasImageCount: "3",
     streamImages: "true",
     streamPartialImages: "1",
+    imageApiMode: "images",
 };
 
 type ConfigStore = {
@@ -223,6 +225,7 @@ export const useConfigStore = create<ConfigStore>()(
                         canvasImageCount: config.canvasImageCount || "3",
                         streamImages: config.streamImages || "true",
                         streamPartialImages: config.streamPartialImages || "1",
+                        imageApiMode: config.imageApiMode || "images",
                         imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels) : filterModelsByCapability(config.models, "image"),
                         videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels) : filterModelsByCapability(config.models, "video"),
                         textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels) : filterModelsByCapability(config.models, "text"),

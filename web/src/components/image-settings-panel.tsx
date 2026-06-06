@@ -32,7 +32,7 @@ const aspectOptions = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "streamImages" | "streamPartialImages", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count" | "streamImages" | "streamPartialImages" | "imageApiMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -125,6 +125,20 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                         <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
+                    </div>
+                </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>生图接口</SettingTitle>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        <OptionPill selected={(config.imageApiMode || "images") !== "responses"} theme={theme} onClick={() => onConfigChange("imageApiMode", "images")}>
+                            图像接口
+                        </OptionPill>
+                        <OptionPill selected={config.imageApiMode === "responses"} theme={theme} onClick={() => onConfigChange("imageApiMode", "responses")}>
+                            Responses
+                        </OptionPill>
+                    </div>
+                    <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
+                        Codex 等不支持 /images 端点的渠道请选 Responses（走 /responses 接口）。
                     </div>
                 </div>
                 <div className="space-y-2.5">

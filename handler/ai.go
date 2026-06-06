@@ -22,6 +22,10 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 	proxyAIRequest(w, r, "/images/edits")
 }
 
+func AIResponses(w http.ResponseWriter, r *http.Request) {
+	proxyAIRequest(w, r, "/responses")
+}
+
 func AIChatCompletions(w http.ResponseWriter, r *http.Request) {
 	proxyAIRequest(w, r, "/chat/completions")
 }
