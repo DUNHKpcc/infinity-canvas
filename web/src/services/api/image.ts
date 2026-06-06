@@ -364,10 +364,9 @@ function isResponsesMode(config: AiConfig) {
 
 const RESPONSES_PROMPT_GUARD = "Use the following text as the complete prompt. Do not rewrite it:";
 
-/** Build the Responses-API `input` (matches gpt_image_playground: string for text-only, message list with images). */
+/** Build the Responses-API `input` as a message list — this gateway rejects a bare string ("input must be a list"). */
 function buildResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
     const text = `${RESPONSES_PROMPT_GUARD}\n${prompt}`;
-    if (!inputImageDataUrls.length) return text;
     return [
         {
             role: "user",
