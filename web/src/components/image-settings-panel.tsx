@@ -4,7 +4,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
+import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -32,7 +32,7 @@ const aspectOptions = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "streamImages" | "streamPartialImages" | "imageApiMode", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -42,6 +42,9 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
+    // streamImages / streamPartialImages / imageApiMode are global (not per-node); write them straight to the config store
+    // so they take effect and reflect correctly regardless of which surface hosts this panel.
+    const setGlobalConfig = useConfigStore((state) => state.updateConfig);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
@@ -130,10 +133,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生图接口</SettingTitle>
                     <div className="grid grid-cols-2 gap-2.5">
-                        <OptionPill selected={(config.imageApiMode || "images") !== "responses"} theme={theme} onClick={() => onConfigChange("imageApiMode", "images")}>
+                        <OptionPill selected={(config.imageApiMode || "images") !== "responses"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "images")}>
                             图像接口
                         </OptionPill>
-                        <OptionPill selected={config.imageApiMode === "responses"} theme={theme} onClick={() => onConfigChange("imageApiMode", "responses")}>
+                        <OptionPill selected={config.imageApiMode === "responses"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "responses")}>
                             Responses
                         </OptionPill>
                     </div>
@@ -145,7 +148,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>流式生成</SettingTitle>
                         <span onMouseDown={(event) => event.stopPropagation()}>
-                            <Switch size="small" checked={config.streamImages !== "false"} onChange={(checked) => onConfigChange("streamImages", checked ? "true" : "false")} />
+                            <Switch size="small" checked={config.streamImages !== "false"} onChange={(checked) => setGlobalConfig("streamImages", checked ? "true" : "false")} />
                         </span>
                     </div>
                     {config.streamImages !== "false" ? (
@@ -153,7 +156,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             <SettingTitle color={theme.node.muted}>中间步骤图像数</SettingTitle>
                             <div className="grid grid-cols-4 gap-2.5">
                                 {["0", "1", "2", "3"].map((value) => (
-                                    <OptionPill key={value} selected={(config.streamPartialImages || "1") === value} theme={theme} onClick={() => onConfigChange("streamPartialImages", value)}>
+                                    <OptionPill key={value} selected={(config.streamPartialImages || "1") === value} theme={theme} onClick={() => setGlobalConfig("streamPartialImages", value)}>
                                         {value}
                                     </OptionPill>
                                 ))}
