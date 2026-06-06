@@ -136,9 +136,19 @@ function parseImagePayload(payload: ImageApiResponse) {
 }
 
 function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
-        const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || readStatusError(error.response?.status, fallback);
+    if (axios.isAxiosError(error)) {
+        let responseData: unknown = error.response?.data;
+        // Streaming requests use responseType:"text", so an error body arrives as a raw string — parse it to surface the upstream message.
+        if (typeof responseData === "string" && responseData.trim()) {
+            const text = responseData;
+            try {
+                responseData = JSON.parse(text);
+            } catch {
+                return text;
+            }
+        }
+        const data = responseData as { error?: { message?: string }; msg?: string } | undefined;
+        return data?.msg || data?.error?.message || readStatusError(error.response?.status, fallback);
     }
     return error instanceof Error ? error.message : fallback;
 }
@@ -352,12 +362,16 @@ function isResponsesMode(config: AiConfig) {
     return config.imageApiMode === "responses";
 }
 
-/** Build the Responses-API `input` as a message list (some channels reject a plain-string input). */
+const RESPONSES_PROMPT_GUARD = "Use the following text as the complete prompt. Do not rewrite it:";
+
+/** Build the Responses-API `input` (matches gpt_image_playground: string for text-only, message list with images). */
 function buildResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
+    const text = `${RESPONSES_PROMPT_GUARD}\n${prompt}`;
+    if (!inputImageDataUrls.length) return text;
     return [
         {
             role: "user",
-            content: [{ type: "input_text", text: prompt }, ...inputImageDataUrls.map((dataUrl) => ({ type: "input_image", image_url: dataUrl }))],
+            content: [{ type: "input_text", text }, ...inputImageDataUrls.map((dataUrl) => ({ type: "input_image", image_url: dataUrl }))],
         },
     ];
 }
@@ -369,6 +383,7 @@ function buildResponsesImageTool(config: AiConfig, isEdit: boolean, requestSize:
         action: isEdit ? "edit" : "generate",
         size: requestSize || "auto",
         output_format: IMAGE_OUTPUT_FORMAT,
+        moderation: "auto",
     };
     if (isStreamEnabled(config)) tool.partial_images = resolvePartialImages(config);
     if (maskDataUrl) tool.input_image_mask = { image_url: maskDataUrl };
