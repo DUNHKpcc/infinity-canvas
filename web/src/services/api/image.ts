@@ -353,7 +353,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const headers = aiHeaders(config) as Record<string, string>;
         const images = stream
             ? await runImageStream(aiApiUrl(config, "/images/edits"), formData, headers, onPartialImage)
-            : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) })).data);
+            : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers })).data);
         refreshRemoteUser(config);
         return images;
     } catch (error) {

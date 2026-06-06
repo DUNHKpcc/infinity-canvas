@@ -536,14 +536,16 @@ function AssistantMessages({
                     {message.images?.map((image) => (
                         <div key={image.id} className="w-[250px] overflow-hidden rounded-2xl border" style={{ background: theme.node.panel, borderColor: theme.node.stroke }}>
                             <img src={image.dataUrl} alt="" className="aspect-square w-full object-cover" />
-                            <Button
-                                type="text"
-                                className="!h-8 !w-full !rounded-none"
-                                style={{ borderTop: `1px solid ${theme.node.stroke}`, color: theme.node.text }}
-                                icon={<Plus className="size-3.5" />}
-                                onClick={() => onInsertImage(image)}
-                                title="插入画布"
-                            />
+                            {!message.isLoading ? (
+                                <Button
+                                    type="text"
+                                    className="!h-8 !w-full !rounded-none"
+                                    style={{ borderTop: `1px solid ${theme.node.stroke}`, color: theme.node.text }}
+                                    icon={<Plus className="size-3.5" />}
+                                    onClick={() => onInsertImage(image)}
+                                    title="插入画布"
+                                />
+                            ) : null}
                         </div>
                     ))}
                 </div>
