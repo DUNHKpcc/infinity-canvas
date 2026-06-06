@@ -352,9 +352,8 @@ function isResponsesMode(config: AiConfig) {
     return config.imageApiMode === "responses";
 }
 
-/** Build the Responses-API `input` field: plain string, or a user message with input images. */
+/** Build the Responses-API `input` as a message list (some channels reject a plain-string input). */
 function buildResponsesInput(prompt: string, inputImageDataUrls: string[]): unknown {
-    if (!inputImageDataUrls.length) return prompt;
     return [
         {
             role: "user",
