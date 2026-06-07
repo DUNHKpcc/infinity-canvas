@@ -1,8 +1,8 @@
 "use client";
 
-import type { CSSProperties, RefObject } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
 import { Avatar, Dropdown, Tooltip } from "antd";
-import { BookOpen, Keyboard, LogOut, Settings2, Shield } from "lucide-react";
+import { BookOpen, Keyboard, LogOut, Monitor, Moon, Settings2, Shield, Sun } from "lucide-react";
 import type { ItemType } from "antd/es/menu/interface";
 import Link from "next/link";
 
@@ -14,7 +14,7 @@ import { DOCS_URL } from "@/constant/env";
 import { cn } from "@/lib/utils";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useConfigStore } from "@/stores/use-config-store";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { getSystemTheme, useThemeStore, type ThemeName, type ThemePreference } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 type UserStatusActionsProps = {
@@ -29,7 +29,8 @@ type UserStatusActionsProps = {
 
 export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, accountOpen, onAccountOpenChange, accountRef, getPopupContainer }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
-    const setTheme = useThemeStore((state) => state.setTheme);
+    const preference = useThemeStore((state) => state.preference);
+    const setPreference = useThemeStore((state) => state.setPreference);
     const user = useUserStore((state) => state.user);
     const logout = useUserStore((state) => state.clearSession);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -62,7 +63,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                     <Settings2 className="size-4" />
                 </button>
             ) : null}
-            <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={naturalIconClass} style={iconStyle} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />
+            <ThemePreferenceToggle preference={preference} theme={theme} onSelect={setPreference} style={iconStyle} />
             <VersionReleaseModal style={versionStyle} />
             <GitHubLink className={cn("bg-transparent hover:bg-transparent dark:hover:bg-transparent", gitHubClassName)} style={gitHubStyle} />
             {variant === "canvas" && user ? (
@@ -100,6 +101,38 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                     </Dropdown>
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+const THEME_PREFERENCE_OPTIONS: { value: ThemePreference; label: string; icon: ReactNode }[] = [
+    { value: "light", label: "浅色", icon: <Sun className="size-4" /> },
+    { value: "system", label: "跟随系统", icon: <Monitor className="size-4" /> },
+    { value: "dark", label: "深色", icon: <Moon className="size-4" /> },
+];
+
+function ThemePreferenceToggle({ preference, theme, onSelect, style }: { preference: ThemePreference; theme: ThemeName; onSelect: (preference: ThemePreference) => void; style?: CSSProperties }) {
+    return (
+        <div className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-black/[0.06] p-0.5 dark:bg-white/10" style={style} role="radiogroup" aria-label="主题模式">
+            {THEME_PREFERENCE_OPTIONS.map((option) => {
+                const active = preference === option.value;
+                const targetTheme: ThemeName = option.value === "system" ? getSystemTheme() : option.value;
+                return (
+                    <AnimatedThemeToggler
+                        key={option.value}
+                        theme={theme}
+                        targetTheme={targetTheme}
+                        onThemeChange={() => onSelect(option.value)}
+                        className={cn("inline-flex size-7 items-center justify-center rounded-full transition [&_svg]:size-4", active ? "bg-white text-stone-900 shadow-sm dark:bg-stone-800 dark:text-white" : "text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100")}
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={option.label}
+                        title={option.label}
+                    >
+                        {option.icon}
+                    </AnimatedThemeToggler>
+                );
+            })}
         </div>
     );
 }

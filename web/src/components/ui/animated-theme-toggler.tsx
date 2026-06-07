@@ -113,6 +113,15 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
         const button = buttonRef.current;
         if (!button) return;
 
+        const currentTheme: "light" | "dark" = isDark ? "dark" : "light";
+        const resolvedNext = targetTheme ?? (isDark ? "light" : "dark");
+        // Resolved color unchanged (e.g. choosing "follow system" while already on that color):
+        // still report the choice so the caller can record the preference, but skip the no-op transition.
+        if (resolvedNext === currentTheme) {
+            onThemeChange?.(resolvedNext);
+            return;
+        }
+
         const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
         const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
 

@@ -1,10 +1,10 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Library, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Eraser, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Library, Monitor, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { getSystemTheme, useThemeStore } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 
 export function CanvasToolbar({
@@ -52,7 +52,8 @@ export function CanvasToolbar({
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const colorTheme = useThemeStore((state) => state.theme);
-    const setTheme = useThemeStore((state) => state.setTheme);
+    const preference = useThemeStore((state) => state.preference);
+    const setPreference = useThemeStore((state) => state.setPreference);
     const theme = canvasThemes[colorTheme];
     const [hovered, setHovered] = useState<string | null>(null);
     const [tipX, setTipX] = useState(0);
@@ -140,14 +141,18 @@ export function CanvasToolbar({
                 >
                     <div className="px-1 pb-2 text-sm font-medium opacity-65">画布外观</div>
                     <div className="px-1 pb-1.5 text-[11px] font-medium opacity-50">主题模式</div>
-                    <div className="grid grid-cols-2 gap-1 rounded-lg p-1" style={{ background: theme.toolbar.itemHover }}>
-                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="light" onThemeChange={setTheme}>
+                    <div className="grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: theme.toolbar.itemHover }}>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="light" active={preference === "light"} label="浅色" onActivate={() => setPreference("light")}>
                             <Sun className="size-4" />
                             浅色
                         </CanvasThemeButton>
-                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="dark" onThemeChange={setTheme}>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="dark" active={preference === "dark"} label="深色" onActivate={() => setPreference("dark")}>
                             <Moon className="size-4" />
                             深色
+                        </CanvasThemeButton>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme={getSystemTheme()} active={preference === "system"} label="跟随系统" onActivate={() => setPreference("system")}>
+                            <Monitor className="size-4" />
+                            系统
                         </CanvasThemeButton>
                     </div>
                     <div className="mt-3 px-1 pb-1.5 text-[11px] font-medium opacity-50">网格样式</div>
@@ -249,20 +254,19 @@ function Divider({ theme }: { theme: CanvasTheme }) {
     return <div className="mx-1 h-6 w-px" style={{ background: theme.toolbar.border }} />;
 }
 
-function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; onThemeChange: (theme: CanvasColorTheme) => void; children: ReactNode }) {
+function CanvasThemeButton({ colorTheme, targetTheme, active, label, onActivate, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; active: boolean; label: string; onActivate: () => void; children: ReactNode }) {
     const theme = canvasThemes[colorTheme];
-    const active = colorTheme === targetTheme;
     const activeStyle = colorTheme === "light" ? { background: "#111111", color: "#ffffff" } : { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
 
     return (
         <AnimatedThemeToggler
             theme={colorTheme}
             targetTheme={targetTheme}
-            onThemeChange={onThemeChange}
+            onThemeChange={onActivate}
             className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm transition"
             style={active ? activeStyle : { color: theme.toolbar.item }}
-            aria-label={`切换到${targetTheme === "dark" ? "深色" : "浅色"}主题`}
-            title={`切换到${targetTheme === "dark" ? "深色" : "浅色"}主题`}
+            aria-label={label}
+            title={label}
         >
             {children}
         </AnimatedThemeToggler>
