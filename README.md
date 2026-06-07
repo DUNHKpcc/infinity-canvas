@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="96" alt="infinity-canvas logo">
+  <img src="web/public/logo.png" width="96" alt="infinity-canvas logo">
 </p>
 
 <h1 align="center">无限画布 · infinity-canvas</h1>
