@@ -12,6 +12,8 @@ import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
+const MAX_TOOLBAR_ITEMS_PER_ROW = 5;
+
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
     viewport: ViewportTransform;
@@ -174,10 +176,21 @@ export function CanvasNodeHoverToolbar({
         closeImageToolSettings();
     };
 
+    const moreTool: ToolbarTool | null = hasImage
+        ? { id: "more", title: "配置快捷工具", label: "更多", icon: <Ellipsis className="size-4" />, active: imageToolSettingsOpen, onClick: openImageToolSettings }
+        : null;
+    const allToolbarActions = moreTool ? [...toolbarTools, moreTool] : toolbarTools;
+    const toolbarRowCount = Math.max(1, Math.ceil(allToolbarActions.length / MAX_TOOLBAR_ITEMS_PER_ROW));
+    const toolbarPerRow = Math.ceil(allToolbarActions.length / toolbarRowCount);
+    const toolbarRows: ToolbarTool[][] = [];
+    for (let index = 0; index < allToolbarActions.length; index += toolbarPerRow) {
+        toolbarRows.push(allToolbarActions.slice(index, index + toolbarPerRow));
+    }
+
     return (
         <>
             <div
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                className="absolute z-[70] flex flex-col -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 style={{ left, top }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
@@ -186,10 +199,13 @@ export function CanvasNodeHoverToolbar({
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
             >
-                {toolbarTools.map((tool) => (
-                    <ToolbarAction key={tool.id} {...tool} showLabel={showImageToolLabels} />
+                {toolbarRows.map((row, rowIndex) => (
+                    <div key={rowIndex} className="flex h-12 items-center">
+                        {row.map((tool) => (
+                            <ToolbarAction key={tool.id} {...tool} showLabel={showImageToolLabels} />
+                        ))}
+                    </div>
                 ))}
-                {hasImage ? <ToolbarAction id="more" title="配置快捷工具" label="更多" icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
             </div>
             {hasImage ? (
                 <ImageToolSettingsModal
