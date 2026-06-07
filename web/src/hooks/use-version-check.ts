@@ -26,6 +26,36 @@ function isNewerVersion(latestVersion: string, currentVersion: string) {
     return latest.some((value, index) => value > current[index] && latest.slice(0, index).every((part, prevIndex) => part === current[prevIndex]));
 }
 
+// Keep whichever version is newer, so a remote that lags behind the local build never shows as "latest".
+function pickNewerVersion(a: string, b: string) {
+    return isNewerVersion(b, a) ? b : a;
+}
+
+function compareVersionDesc(a: string, b: string) {
+    const pa = toVersionParts(a);
+    const pb = toVersionParts(b);
+    if (!pa && !pb) return 0;
+    if (!pa) return 1;
+    if (!pb) return -1;
+    for (let index = 0; index < 3; index++) {
+        if (pa[index] !== pb[index]) return pb[index] - pa[index];
+    }
+    return 0;
+}
+
+// Union of local (this build) and remote releases, deduped by version (local wins), newest first.
+// Prevents the timeline from regressing when remote lags behind the local CHANGELOG.
+function mergeReleases(local: ReleaseInfo[], remote: ReleaseInfo[]): ReleaseInfo[] {
+    const seen = new Set<string>();
+    const merged: ReleaseInfo[] = [];
+    for (const release of [...local, ...remote]) {
+        if (seen.has(release.version)) continue;
+        seen.add(release.version);
+        merged.push(release);
+    }
+    return merged.sort((a, b) => compareVersionDesc(a.version, b.version));
+}
+
 export function useVersionCheck() {
     const currentVersion = APP_VERSION;
     const { message } = App.useApp();
@@ -41,7 +71,7 @@ export function useVersionCheck() {
             const response = await fetch(latestVersionUrl);
             if (!response.ok) return false;
             const version = await response.text();
-            setLatestVersion(version.trim() || currentVersion);
+            setLatestVersion(pickNewerVersion(currentVersion, version.trim() || currentVersion));
             return true;
         } catch {
             return false;
@@ -56,8 +86,8 @@ export function useVersionCheck() {
                 if (!versionResponse.ok) throw new Error("版本读取失败");
                 if (!changelogResponse.ok) throw new Error("更新日志读取失败");
                 const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
-                setLatestVersion(version.trim() || currentVersion);
-                if (changelog.trim()) setReleases(parseChangelog(changelog));
+                setLatestVersion(pickNewerVersion(currentVersion, version.trim() || currentVersion));
+                setReleases(changelog.trim() ? mergeReleases(localReleases, parseChangelog(changelog)) : localReleases);
                 if (showMessage) message.success("已获取最新版本信息");
                 return true;
             } catch {
