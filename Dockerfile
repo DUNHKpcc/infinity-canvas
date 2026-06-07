@@ -3,7 +3,11 @@ FROM docker.m.daocloud.io/oven/bun:1.3.13 AS web-build
 
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    n=0; until bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache; do \
+      n=$((n+1)); [ "$n" -ge 3 ] && echo "bun install failed after $n attempts" && exit 1; \
+      echo "bun install retry $n ..."; sleep 5; \
+    done
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
