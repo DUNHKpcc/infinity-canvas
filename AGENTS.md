@@ -86,6 +86,35 @@
 - 提交完成后，给当前提交打最新版本号对应的 tag，例如 `v0.0.5`。
 - 发版本流程中不要执行编译、测试或构建，除非用户明确要求。
 
+## 部署与上线（CI/CD）
+
+镜像在 **GitHub Actions 云端构建**，推到 **GHCR + 阿里云 ACR（北京）**；生产服务器（国内阿里云 ECS）只负责 `pull`。**不要在服务器上构建**（2G 内存会 OOM），也不要本地 build 再 scp。
+
+- **构建工作流**：`.github/workflows/docker-image.yml`，触发 = push `v*` tag 或手动 `workflow_dispatch`。同时登录 GHCR（`GITHUB_TOKEN`）与 ACR，镜像推两处并打 `latest`/版本号/`sha` 标签。
+- **镜像仓库**：
+  - ACR 个人版**专属实例域名**（不是通用 `registry.cn-beijing.aliyuncs.com`）：
+    - CI 推送（公网）：`crpi-aqxskm2qivyd0eo5.cn-beijing.personal.cr.aliyuncs.com/dunhkpcc/infinity-canvas`
+    - 服务器拉取（VPC 内网，最快免流量）：`crpi-aqxskm2qivyd0eo5-vpc.cn-beijing.personal.cr.aliyuncs.com/dunhkpcc/infinity-canvas`
+  - GHCR：`ghcr.io/dunhkpcc/infinity-canvas`（公开镜像，但**国内拉不动**——blob 走 githubusercontent CDN 被墙；国内一律用 ACR）。
+  - ACR 仓库已设**公开**，服务器拉取免 `docker login`。
+- **CI 所需 GitHub Secrets**：`ALIYUN_REGISTRY_USERNAME`、`ALIYUN_REGISTRY_PASSWORD`（ACR 控制台固定密码）。
+- **服务器**：`ec2-2vc-2g-Aliy-cent`（`39.96.164.116`，北京），部署目录 `/root/infinity-canvas/`（非 git 仓库，仅 compose+.env+data+ghmirror），容器 `127.0.0.1:3100->3000`，数据卷 `./data`（SQLite）。compose 的 image 用上面的 **VPC `:latest`**。
+
+**日常上线流程**：
+```bash
+# 本地：走「发版本流程」打 tag 后
+git push origin vX.Y.Z                                   # → Actions 自动构建推 ACR
+# 服务器：
+cd /root/infinity-canvas && docker compose pull && docker compose up -d
+```
+
+**注意事项 / 坑**：
+- registry `/v2/` 返回 401 只代表 API 可达，≠ 能拉镜像；国内判断能否拉镜像看实际 blob 速度，GHCR 在国内会卡死。
+- 「应用容器无法出网」（靠 `ghmirror/` 绕 github raw）与「宿主能否 `docker pull`」是两件事，别混。
+- Dockerfile 的 `bun install` 已加重试抗 CI 偶发网络失败；改动该步注意保留「全失败才 `exit 1`」。
+- 改服务器 compose / 覆盖数据库等破坏性操作前先备份（`*.bak`），旧镜像 `infinity-canvas:prod` 保留用于回滚：`cp docker-compose.yml.bak docker-compose.yml && docker compose up -d`。
+- 详细排查记录见 Obsidian：`DpccGamingMD/项目文档/infinity-canvas/云端CI构建-GitHubActions到阿里云ACR.md`。
+
 ## Fork 维护
 
 本仓库是 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 的 fork：
