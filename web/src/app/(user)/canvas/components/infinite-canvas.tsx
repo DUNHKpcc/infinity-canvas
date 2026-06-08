@@ -10,6 +10,7 @@ type InfiniteCanvasProps = {
     containerRef: React.RefObject<HTMLDivElement | null>;
     viewport: ViewportTransform;
     backgroundMode?: CanvasBackgroundMode;
+    canvasTool?: "pan" | "select";
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
@@ -18,7 +19,7 @@ type InfiniteCanvasProps = {
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", canvasTool = "pan", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -91,14 +92,16 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
 
-        if (event.button === 0 && (event.ctrlKey || event.metaKey) && isBackgroundClick) {
+        // 框选：左键 + 空白 + 非空格，且（按住 Ctrl/Cmd 或处于框选模式）
+        if (event.button === 0 && isBackgroundClick && !isSpacePressed && (event.ctrlKey || event.metaKey || canvasTool === "select")) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             onCanvasMouseDown?.(event);
             return;
         }
 
-        if (event.button === 1 || (event.button === 0 && !isSpacePressed && isBackgroundClick)) {
+        // 平移：中键，或（左键 + 空白）——平移模式直接拖，框选模式按住空格拖
+        if (event.button === 1 || (event.button === 0 && isBackgroundClick)) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             panState.current = {
@@ -111,10 +114,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             };
             document.body.style.cursor = "grabbing";
             return;
-        }
-
-        if (event.button === 0 && isSpacePressed && isBackgroundClick) {
-            event.preventDefault();
         }
     };
 
@@ -171,7 +170,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         <div
             ref={containerRef}
             className="relative h-full w-full cursor-grab select-none overflow-hidden"
-            style={{ background: theme.canvas.background }}
+            style={{ background: theme.canvas.background, cursor: canvasTool === "select" ? "crosshair" : undefined }}
             onPointerDown={handlePointerDown}
             onWheel={handleWheel}
             onContextMenu={onContextMenu}

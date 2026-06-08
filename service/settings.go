@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -350,7 +351,8 @@ func fetchAdminChannelModels(channel model.ModelChannel) ([]string, error) {
 	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
 	response, err := adminModelHTTPClient.Do(request)
 	if err != nil {
-		return nil, safeMessageError{message: "读取模型失败：上游接口无响应或网络不可达"}
+		log.Printf("[AdminChannelModels] 拉取模型失败 url=%s err=%v", BuildModelChannelURL(channel, "/models"), err)
+		return nil, safeMessageError{message: fmt.Sprintf("读取模型失败：上游接口无响应或网络不可达（%s）", err.Error())}
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(response.Body)
@@ -395,7 +397,8 @@ func testAdminChannelModel(channel model.ModelChannel, modelName string) (string
 	request.Header.Set("Content-Type", "application/json")
 	response, err := adminModelHTTPClient.Do(request)
 	if err != nil {
-		return "", safeMessageError{message: "测试失败：上游接口无响应或网络不可达"}
+		log.Printf("[testAdminChannelModel] 测试失败 url=%s model=%s err=%v", BuildModelChannelURL(channel, "/chat/completions"), modelName, err)
+		return "", safeMessageError{message: fmt.Sprintf("测试失败：上游接口无响应或网络不可达（%s）", err.Error())}
 	}
 	defer response.Body.Close()
 	responseBody, _ := io.ReadAll(response.Body)

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { ChevronRight, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { formatBytes } from "@/lib/image-utils";
+import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
@@ -354,11 +354,22 @@ const nodeContentRenderers = {
 
 function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" | "theme">) {
     const preview = node.metadata?.previewDataUrl;
+    const [elapsedMs, setElapsedMs] = useState(0);
+    useEffect(() => {
+        const startedAt = performance.now();
+        const update = () => setElapsedMs(performance.now() - startedAt);
+        update();
+        const timer = window.setInterval(update, 1000);
+        return () => window.clearInterval(timer);
+    }, []);
     return (
-        <div className="relative flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
+        <div className="relative flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.activeStroke }}>
             {preview ? <img src={preview} alt="" className="absolute inset-0 h-full w-full rounded-[18px] object-cover opacity-60" /> : null}
             <div className="z-10 size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
             <span className="z-10 text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="z-10 text-[11px] font-medium tabular-nums" style={{ color: theme.node.muted }}>
+                {formatDuration(elapsedMs)}
+            </span>
         </div>
     );
 }
@@ -434,7 +445,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 
 function ResourceLabelBadge({ reference }: { reference: CanvasResourceReference }) {
     return (
-        <span className={`pointer-events-none absolute right-2 top-2 z-30 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${reference.active ? "bg-[#2f80ff] text-white shadow-sm" : "bg-black/35 text-white/75"}`}>
+        <span className={`pointer-events-none absolute left-2 top-2 z-30 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${reference.active ? "bg-[#2f80ff] text-white shadow-sm" : "bg-black/35 text-white/75"}`}>
             {reference.label}
         </span>
     );
@@ -596,7 +607,7 @@ function ImageInfoBar({ node }: { node: CanvasNodeData }) {
     const size = formatBytes(node.metadata?.bytes || 0);
     return (
         <div className="pointer-events-none absolute bottom-3 right-3 z-40 max-w-[calc(100%-24px)]">
-            <span className="max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
+            <span className="block max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
                 {width} x {height}
                 {size ? ` · ${size}` : ""}
             </span>
