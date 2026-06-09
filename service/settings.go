@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,15 @@ import (
 
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
+)
+
+// 渠道生图测试用的最小可重复请求参数；尺寸取 1024×1024（满足主流渠道的最小像素预算，256×256 会被
+// gpt-image / Codex 类渠道以 "below the current minimum pixel budget" 拒绝），张数 1，控制成本。
+const (
+	adminChannelTestImagePrompt = "a red dot on white background"
+	adminChannelTestImageSize   = "1024x1024"
+	// 与前端 image.ts 的 RESPONSES_PROMPT_GUARD 保持一致：部分网关要求 input 为消息列表且不被改写。
+	adminChannelResponsesPromptGuard = "Use the following text as the complete prompt. Do not rewrite it:"
 )
 
 var adminModelHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -52,7 +62,7 @@ func AdminChannelModels(index *int, channel model.ModelChannel) ([]string, error
 	return fetchAdminChannelModels(resolved)
 }
 
-func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName string) (string, error) {
+func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName string, testType string) (string, error) {
 	resolved, err := resolveAdminChannel(index, channel)
 	if err != nil {
 		return "", err
@@ -60,7 +70,16 @@ func AdminTestChannelModel(index *int, channel model.ModelChannel, modelName str
 	if isArkAgentPlanChannel(resolved) || isSeedanceModelName(modelName) {
 		return testArkSeedanceChannelModel(resolved, modelName)
 	}
-	return testAdminChannelModel(resolved, modelName)
+	switch strings.TrimSpace(testType) {
+	case "image":
+		return testAdminChannelImage(resolved, modelName, false)
+	case "image_stream":
+		return testAdminChannelImage(resolved, modelName, true)
+	case "responses":
+		return testAdminChannelResponses(resolved, modelName)
+	default:
+		return testAdminChannelModel(resolved, modelName)
+	}
 }
 
 func normalizeSettings(settings model.Settings) model.Settings {
@@ -433,6 +452,243 @@ func testArkSeedanceChannelModel(channel model.ModelChannel, modelName string) (
 		return "Seedance 视频模型不会发送 /chat/completions 文本测试。已检查 Base URL、API Key 和模型名非空；未调用视频生成接口，因此未验证套餐额度或模型权限。", nil
 	}
 	return "Agent Plan / Seedance 视频模型配置格式已通过。后台测试不会调用视频生成接口，因此未验证 API Key、套餐额度或模型权限；请在画布中使用视频生成验证。", nil
+}
+
+// testAdminChannelImage 用 /images/generations 验证渠道是否真正可生图；stream=true 时只读到首个
+// partial_image / image_generation.completed 事件就关掉连接，避免拉完整 b64 浪费带宽。
+func testAdminChannelImage(channel model.ModelChannel, modelName string, stream bool) (string, error) {
+	if strings.TrimSpace(modelName) == "" {
+		return "", errors.New("缺少模型名称")
+	}
+	payload := map[string]any{
+		"model":           modelName,
+		"prompt":          adminChannelTestImagePrompt,
+		"n":               1,
+		"size":            adminChannelTestImageSize,
+		"response_format": "b64_json",
+	}
+	if stream {
+		payload["stream"] = true
+		payload["partial_images"] = 1
+	}
+	body, _ := json.Marshal(payload)
+	url := BuildModelChannelURL(channel, "/images/generations")
+	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
+	request.Header.Set("Content-Type", "application/json")
+	if stream {
+		request.Header.Set("Accept", "text/event-stream")
+	}
+	client := adminModelHTTPClient
+	if stream {
+		// 流式测试单独用一个更长超时但不复用连接池，避免连接长时间挂起影响后续测试。
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		log.Printf("[testAdminChannelImage] 测试失败 url=%s model=%s stream=%v err=%v", url, modelName, stream, err)
+		return "", safeMessageError{message: fmt.Sprintf("测试失败：上游接口无响应或网络不可达（%s）", err.Error())}
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusBadRequest {
+		respBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return "", hintCodexChannel(readAdminChannelError(respBody, response.StatusCode, "测试失败"))
+	}
+	if stream {
+		return readImageStreamFirstEvent(response)
+	}
+	respBody, _ := io.ReadAll(response.Body)
+	if len(respBody) == 0 {
+		return "", safeMessageError{message: "测试失败：上游返回空响应"}
+	}
+	var parsed struct {
+		Data []struct {
+			B64JSON string `json:"b64_json"`
+			URL     string `json:"url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil || len(parsed.Data) == 0 {
+		return "", safeMessageError{message: "测试失败：上游响应中未找到 data[0]，请确认渠道支持 /images/generations"}
+	}
+	if parsed.Data[0].B64JSON == "" && parsed.Data[0].URL == "" {
+		return "", safeMessageError{message: "测试失败：上游 data[0] 缺少 b64_json/url 字段"}
+	}
+	return "ok", nil
+}
+
+// readImageStreamFirstEvent 扫描 SSE 流，遇到首个 image_generation.partial_image / completed
+// 事件就返回；扫描到结束都没拿到说明渠道不支持流式生图。
+func readImageStreamFirstEvent(response *http.Response) (string, error) {
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	if !strings.Contains(contentType, "text/event-stream") {
+		return "", safeMessageError{message: "测试失败：上游未返回 text/event-stream，渠道可能不支持流式生图"}
+	}
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var payload struct {
+			Type    string `json:"type"`
+			B64JSON string `json:"b64_json"`
+		}
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			continue
+		}
+		lower := strings.ToLower(payload.Type)
+		if strings.Contains(lower, "partial_image") || strings.Contains(lower, "image_generation.completed") || strings.Contains(lower, "image.completed") {
+			return "ok (stream)", nil
+		}
+		if payload.B64JSON != "" {
+			return "ok (stream)", nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", safeMessageError{message: fmt.Sprintf("测试失败：读取流式响应出错（%s）", err.Error())}
+	}
+	return "", safeMessageError{message: "测试失败：流式响应中未捕获到 partial_image 或 completed 事件"}
+}
+
+// testAdminChannelResponses 用 /responses + image_generation 工具验证 Codex 类渠道是否可生图。
+// 请求结构与前端 image.ts requestViaResponses 对齐：顶层 stream=true（Codex 网关强制流式，否则报
+// "Stream must be set to true"）、input 为消息列表、image_generation 工具带 action/output_format/
+// moderation/partial_images，且不带 quality（Codex 网关会拒绝）。
+func testAdminChannelResponses(channel model.ModelChannel, modelName string) (string, error) {
+	if strings.TrimSpace(modelName) == "" {
+		return "", errors.New("缺少模型名称")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model": modelName,
+		"input": []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{{
+				"type": "input_text",
+				"text": adminChannelResponsesPromptGuard + "\n" + adminChannelTestImagePrompt,
+			}},
+		}},
+		"tools": []map[string]any{{
+			"type":           "image_generation",
+			"action":         "generate",
+			"size":           adminChannelTestImageSize,
+			"output_format":  "png",
+			"moderation":     "auto",
+			"partial_images": 1,
+		}},
+		"tool_choice": "required",
+		"stream":      true,
+	})
+	url := BuildModelChannelURL(channel, "/responses")
+	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	client := &http.Client{Timeout: 60 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		log.Printf("[testAdminChannelResponses] 测试失败 url=%s model=%s err=%v", url, modelName, err)
+		return "", safeMessageError{message: fmt.Sprintf("测试失败：上游接口无响应或网络不可达（%s）", err.Error())}
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusBadRequest {
+		respBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return "", readAdminChannelError(respBody, response.StatusCode, "测试失败")
+	}
+	return readResponsesFirstImage(response)
+}
+
+// readResponsesFirstImage 解析 /responses 的返回：若为 SSE 则扫到首个 image_generation 的
+// partial_image / completed 事件即返回；若上游忽略 stream 返回普通 JSON 则回退解析 output 数组。
+func readResponsesFirstImage(response *http.Response) (string, error) {
+	if !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		respBody, _ := io.ReadAll(response.Body)
+		if len(respBody) == 0 {
+			return "", safeMessageError{message: "测试失败：上游返回空响应"}
+		}
+		var parsed struct {
+			Output []struct {
+				Type   string `json:"type"`
+				Result string `json:"result"`
+			} `json:"output"`
+		}
+		if err := json.Unmarshal(respBody, &parsed); err != nil {
+			return "", safeMessageError{message: "测试失败：上游响应不是合法 JSON"}
+		}
+		for _, item := range parsed.Output {
+			if strings.Contains(strings.ToLower(item.Type), "image_generation") && item.Result != "" {
+				return "ok (responses)", nil
+			}
+		}
+		return "", safeMessageError{message: "测试失败：/responses 输出中未找到 image_generation 结果，渠道可能不支持该接口"}
+	}
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var payload struct {
+			Type            string `json:"type"`
+			PartialImageB64 string `json:"partial_image_b64"`
+			Error           *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			continue
+		}
+		lower := strings.ToLower(payload.Type)
+		if strings.HasSuffix(lower, ".failed") || strings.HasSuffix(lower, ".error") || payload.Error != nil {
+			msg := payload.Message
+			if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
+				msg = payload.Error.Message
+			}
+			if strings.TrimSpace(msg) == "" {
+				msg = "生成失败"
+			}
+			return "", safeMessageError{message: "测试失败：" + msg}
+		}
+		if strings.Contains(lower, "image_generation_call.partial_image") && payload.PartialImageB64 != "" {
+			return "ok (responses stream)", nil
+		}
+		if strings.Contains(lower, "image_generation_call") && strings.HasSuffix(lower, ".completed") {
+			return "ok (responses stream)", nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", safeMessageError{message: fmt.Sprintf("测试失败：读取流式响应出错（%s）", err.Error())}
+	}
+	return "", safeMessageError{message: "测试失败：/responses 流中未捕获到 image_generation 事件，渠道可能不支持该接口"}
+}
+
+// hintCodexChannel 当 /images/generations 报端点不支持 / 强制流式等错误时，提示渠道可能是 Codex 类，
+// 引导改用 Responses 测试，并在前端把生图接口切到 Responses + 流式。
+func hintCodexChannel(err error) error {
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "endpoint not supported") || strings.Contains(lower, "codex") || strings.Contains(lower, "stream must be set") {
+		return safeMessageError{message: err.Error() + "（该渠道可能是 Codex 类，仅支持 /responses，请改用「Responses」测试；前端生图请在图像设置里把「生图接口」切到 Responses 并开启流式）"}
+	}
+	return err
 }
 
 func readAdminChannelError(body []byte, statusCode int, fallback string) error {

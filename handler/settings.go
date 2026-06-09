@@ -9,9 +9,10 @@ import (
 )
 
 type adminChannelActionRequest struct {
-	Index   *int               `json:"index"`
-	Channel model.ModelChannel `json:"channel"`
-	Model   string             `json:"model"`
+	Index    *int               `json:"index"`
+	Channel  model.ModelChannel `json:"channel"`
+	Model    string             `json:"model"`
+	TestType string             `json:"testType"`
 }
 
 func Settings(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +58,7 @@ func AdminChannelModels(w http.ResponseWriter, r *http.Request) {
 func AdminTestChannelModel(w http.ResponseWriter, r *http.Request) {
 	var request adminChannelActionRequest
 	_ = json.NewDecoder(r.Body).Decode(&request)
-	result, err := service.AdminTestChannelModel(request.Index, request.Channel, request.Model)
+	result, err := service.AdminTestChannelModel(request.Index, request.Channel, request.Model, request.TestType)
 	if err != nil {
 		FailError(w, err)
 		return

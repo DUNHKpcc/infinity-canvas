@@ -7,7 +7,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { EditorView } from "@uiw/react-codemirror";
 
-import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminModelCost, type AdminSettings } from "@/services/api/admin";
+import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminChannelTestType, type AdminModelChannel, type AdminModelCost, type AdminSettings } from "@/services/api/admin";
 import { useUserStore } from "@/stores/use-user-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
@@ -46,9 +46,23 @@ type SettingsTabKey = "public" | "private";
 type EditorMode = "visual" | "json";
 type ModelSelectTabKey = "new" | "current";
 
+const testTypeOptions: { value: AdminChannelTestType; label: string }[] = [
+    { value: "chat", label: "文本" },
+    { value: "image", label: "生图" },
+    { value: "image_stream", label: "流式生图" },
+    { value: "responses", label: "Responses" },
+];
+// 生图类测试会真实调用上游生成接口、消耗渠道额度，发起前需二次确认。
+const testTypeNeedsConfirm: Record<AdminChannelTestType, boolean> = {
+    chat: false,
+    image: true,
+    image_stream: true,
+    responses: true,
+};
+
 export default function AdminSettingsPage() {
     const token = useUserStore((state) => state.token);
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const [form] = Form.useForm<AdminSettings>();
     const [activeTab, setActiveTab] = useState<SettingsTabKey>("public");
     const [editorMode, setEditorMode] = useState<Record<SettingsTabKey, EditorMode>>({ public: "visual", private: "visual" });
@@ -62,6 +76,7 @@ export default function AdminSettingsPage() {
     const [selectedTestModels, setSelectedTestModels] = useState<string[]>([]);
     const [testingModels, setTestingModels] = useState<string[]>([]);
     const [testResults, setTestResults] = useState<Record<string, { status: "success" | "error"; duration?: string; message: string }>>({});
+    const [testType, setTestType] = useState<AdminChannelTestType>("chat");
     const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
     const [modelSelectSource, setModelSelectSource] = useState<string[]>([]);
     const [modelSelectExisting, setModelSelectExisting] = useState<string[]>([]);
@@ -300,6 +315,7 @@ export default function AdminSettingsPage() {
         setSelectedTestModels([]);
         setTestingModels([]);
         setTestResults({});
+        setTestType("chat");
     };
 
     const closeTestDialog = () => {
@@ -308,16 +324,33 @@ export default function AdminSettingsPage() {
         setSelectedTestModels([]);
         setTestingModels([]);
         setTestResults({});
+        setTestType("chat");
     };
 
-    const testModelOnline = async (model: string) => {
+    // 生图类测试会真实调用上游生成接口、消耗渠道额度，发起前弹窗确认一次。
+    const confirmTestType = async (type: AdminChannelTestType, count: number) => {
+        if (!testTypeNeedsConfirm[type]) return true;
+        const label = testTypeOptions.find((item) => item.value === type)?.label || "生图";
+        return new Promise<boolean>((resolve) => {
+            modal.confirm({
+                title: `确认发起「${label}」测试？`,
+                content: `该测试会真实调用上游生成接口，对 ${count} 个模型各发起一次请求，可能消耗渠道额度。`,
+                okText: "确认测试",
+                cancelText: "取消",
+                onOk: () => resolve(true),
+                onCancel: () => resolve(false),
+            });
+        });
+    };
+
+    const runModelTest = async (model: string, type: AdminChannelTestType) => {
         if (testChannelIndex === null) return;
         if (!token) return;
         const channel = normalizeChannel(channels[testChannelIndex]);
         setTestingModels((current) => [...current, model]);
         try {
             const startedAt = performance.now();
-            const result = await testChannelModel(token, { index: testChannelIndex, channel, model });
+            const result = await testChannelModel(token, { index: testChannelIndex, channel, model, testType: type });
             setTestResults((current) => ({ ...current, [model]: { status: "success", duration: `${((performance.now() - startedAt) / 1000).toFixed(2)}s`, message: result } }));
         } catch (error) {
             setTestResults((current) => ({ ...current, [model]: { status: "error", message: error instanceof Error ? error.message : "测试失败" } }));
@@ -326,9 +359,15 @@ export default function AdminSettingsPage() {
         }
     };
 
+    const testModelOnline = async (model: string) => {
+        if (!(await confirmTestType(testType, 1))) return;
+        await runModelTest(model, testType);
+    };
+
     const batchTestModels = async () => {
+        if (!(await confirmTestType(testType, selectedTestModels.length))) return;
         for (const model of selectedTestModels) {
-            await testModelOnline(model);
+            await runModelTest(model, testType);
         }
     };
 
@@ -467,15 +506,7 @@ export default function AdminSettingsPage() {
                                                     dataIndex: "credits",
                                                     width: 220,
                                                     render: (_, item) => (
-                                                        <InputNumber
-                                                            min={0}
-                                                            step={1}
-                                                            precision={0}
-                                                            className="!w-full"
-                                                            value={item.credits}
-                                                            addonAfter="点"
-                                                            onChange={(value) => setModelCost(form, setModelCosts, item.model, Number(value) || 0)}
-                                                        />
+                                                        <InputNumber min={0} step={1} precision={0} className="!w-full" value={item.credits} addonAfter="点" onChange={(value) => setModelCost(form, setModelCosts, item.model, Number(value) || 0)} />
                                                     ),
                                                 },
                                             ]}
@@ -770,7 +801,19 @@ export default function AdminSettingsPage() {
                     destroyOnHidden
                 >
                     <Flex vertical gap={12}>
-                        <Typography.Text type="secondary">普通文本模型会发送一条 hi；Agent Plan / Seedance 视频模型只做配置格式检查，不会发起视频生成，也不代表模型权限已验证。</Typography.Text>
+                        <Flex align="center" gap={12} wrap>
+                            <Typography.Text type="secondary">测试方式</Typography.Text>
+                            <Segmented<AdminChannelTestType> value={testType} onChange={(value) => setTestType(value)} options={testTypeOptions} />
+                        </Flex>
+                        <Typography.Text type="secondary">
+                            {testType === "chat"
+                                ? "文本：发送一条 hi 到 /chat/completions，仅验证文本对话。Agent Plan / Seedance 视频模型只做配置格式检查，不发起视频生成。"
+                                : testType === "image"
+                                  ? "生图：发送一次最小 /images/generations 请求（256×256，1 张），验证渠道能否真实生图。会消耗渠道额度。"
+                                  : testType === "image_stream"
+                                    ? "流式生图：以 stream=true 请求 /images/generations，验证渠道是否返回 SSE 中间帧（partial_image）。会消耗渠道额度。"
+                                    : "Responses：通过 /responses + image_generation 工具验证 Codex 类渠道能否生图。会消耗渠道额度。"}
+                        </Typography.Text>
                         <Input.Search placeholder="搜索模型..." allowClear value={testKeyword} onChange={(event) => setTestKeyword(event.target.value)} />
                         <Table
                             rowKey="model"
@@ -910,11 +953,7 @@ function collectChannelModels(channels: AdminModelChannel[]) {
 }
 
 function collectKnownModels(settings: AdminSettings) {
-    return uniqueModels([
-        ...(settings.public.modelChannel.availableModels || []),
-        ...(settings.public.modelChannel.modelCosts || []).map((item) => item.model),
-        ...settings.private.channels.flatMap((channel) => channel.models || []),
-    ]);
+    return uniqueModels([...(settings.public.modelChannel.availableModels || []), ...(settings.public.modelChannel.modelCosts || []).map((item) => item.model), ...settings.private.channels.flatMap((channel) => channel.models || [])]);
 }
 
 function buildModelSelectGroups(sourceModels: string[], existingModels: string[]): Record<ModelSelectTabKey, string[]> {

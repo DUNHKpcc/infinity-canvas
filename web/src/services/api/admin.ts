@@ -220,10 +220,13 @@ export async function saveAdminSettings(token: string, settings: AdminSettings) 
     return apiPost<AdminSettings>("/api/admin/settings", settings, token);
 }
 
+export type AdminChannelTestType = "chat" | "image" | "image_stream" | "responses";
+
 export type AdminChannelActionRequest = {
     index?: number;
     channel: AdminModelChannel;
     model?: string;
+    testType?: AdminChannelTestType;
 };
 
 export async function fetchChannelModels(token: string, payload: AdminChannelActionRequest) {
