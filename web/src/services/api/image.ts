@@ -362,6 +362,21 @@ function isResponsesMode(config: AiConfig) {
     return config.imageApiMode === "responses";
 }
 
+// 自动回退到 Responses 的适用条件：auto 模式对所有渠道生效；images 模式仅对云端渠道生效
+// （云端常见仅支持 /responses 的 Codex 类渠道）。显式选 responses 不在此列（本就直接走 responses）。
+function shouldAutoFallbackToResponses(config: AiConfig) {
+    const mode = config.imageApiMode || "auto";
+    if (mode === "responses") return false;
+    if (mode === "auto") return true;
+    return config.channelMode === "remote";
+}
+
+// Codex 类渠道拒绝 /images 端点或强制流式时返回的特征错误，命中即说明应改走 /responses。
+function isResponsesFallbackError(error: unknown) {
+    const message = readAxiosError(error, "").toLowerCase();
+    return message.includes("endpoint not supported") || message.includes("stream must be set") || message.includes("codex channel");
+}
+
 const RESPONSES_PROMPT_GUARD = "Use the following text as the complete prompt. Do not rewrite it:";
 
 /** Build the Responses-API `input` as a message list — this gateway rejects a bare string ("input must be a list"). */
@@ -390,15 +405,7 @@ function buildResponsesImageTool(config: AiConfig, isEdit: boolean, requestSize:
 }
 
 /** Generate/edit an image via the Responses API (POST /responses). Returns the final images. */
-async function requestViaResponses(
-    config: AiConfig,
-    prompt: string,
-    inputImageDataUrls: string[],
-    maskDataUrl: string | undefined,
-    isEdit: boolean,
-    requestSize: string | undefined,
-    onPartialImage?: OnPartialImage,
-): Promise<ParsedImage[]> {
+async function requestViaResponses(config: AiConfig, prompt: string, inputImageDataUrls: string[], maskDataUrl: string | undefined, isEdit: boolean, requestSize: string | undefined, onPartialImage?: OnPartialImage): Promise<ParsedImage[]> {
     const stream = isStreamEnabled(config);
     const body: Record<string, unknown> = {
         model: config.model,
@@ -451,30 +458,39 @@ export async function requestGeneration(config: AiConfig, prompt: string, onPart
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
     const stream = isStreamEnabled(config);
+    const runResponses = () => requestViaResponses(config, withSystemPrompt(config, prompt), [], undefined, false, requestSize, onPartialImage);
+    const runImages = async () => {
+        const body = {
+            model: config.model,
+            prompt: withSystemPrompt(config, prompt),
+            n,
+            ...(quality ? { quality } : {}),
+            ...(requestSize ? { size: requestSize } : {}),
+            response_format: "b64_json",
+            output_format: IMAGE_OUTPUT_FORMAT,
+            ...(stream ? { stream: true, partial_images: resolvePartialImages(config) } : {}),
+        };
+        const headers = aiHeaders(config, "application/json") as Record<string, string>;
+        return stream ? await runImageStream(aiApiUrl(config, "/images/generations"), body, headers, { onPartialImage }) : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), body, { headers })).data);
+    };
     try {
-        let images: ParsedImage[];
-        if (isResponsesMode(config)) {
-            images = await requestViaResponses(config, withSystemPrompt(config, prompt), [], undefined, false, requestSize, onPartialImage);
-        } else {
-            const body = {
-                model: config.model,
-                prompt: withSystemPrompt(config, prompt),
-                n,
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                response_format: "b64_json",
-                output_format: IMAGE_OUTPUT_FORMAT,
-                ...(stream ? { stream: true, partial_images: resolvePartialImages(config) } : {}),
-            };
-            const headers = aiHeaders(config, "application/json") as Record<string, string>;
-            images = stream
-                ? await runImageStream(aiApiUrl(config, "/images/generations"), body, headers, { onPartialImage })
-                : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), body, { headers })).data);
-        }
+        const images = isResponsesMode(config) ? await runResponses() : await runImagesWithFallback(config, runImages, runResponses);
         refreshRemoteUser(config);
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
+    }
+}
+
+// runImagesWithFallback 先走图像接口；若是云端/auto 渠道且命中 Codex 特征错误，则自动改走 /responses 重试。
+async function runImagesWithFallback(config: AiConfig, runImages: () => Promise<ParsedImage[]>, runResponses: () => Promise<ParsedImage[]>) {
+    try {
+        return await runImages();
+    } catch (error) {
+        if (shouldAutoFallbackToResponses(config) && isResponsesFallbackError(error)) {
+            return runResponses();
+        }
+        throw error;
     }
 }
 
@@ -484,15 +500,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestSize = resolveRequestSize(quality, config.size);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const stream = isStreamEnabled(config);
-    try {
-        let images: ParsedImage[];
-        if (isResponsesMode(config)) {
-            const inputImageDataUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
-            const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
-            images = await requestViaResponses(config, withSystemPrompt(config, requestPrompt), inputImageDataUrls, maskDataUrl, true, requestSize, onPartialImage);
-            refreshRemoteUser(config);
-            return images;
-        }
+    const runResponses = async () => {
+        const inputImageDataUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
+        return requestViaResponses(config, withSystemPrompt(config, requestPrompt), inputImageDataUrls, maskDataUrl, true, requestSize, onPartialImage);
+    };
+    const runImages = async () => {
         const formData = new FormData();
         formData.set("model", config.model);
         formData.set("prompt", withSystemPrompt(config, requestPrompt));
@@ -514,9 +527,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) formData.set("mask", dataUrlToFile(mask));
 
         const headers = aiHeaders(config) as Record<string, string>;
-        images = stream
-            ? await runImageStream(aiApiUrl(config, "/images/edits"), formData, headers, { onPartialImage })
-            : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers })).data);
+        return stream ? await runImageStream(aiApiUrl(config, "/images/edits"), formData, headers, { onPartialImage }) : parseImagePayload((await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers })).data);
+    };
+    try {
+        const images = isResponsesMode(config) ? await runResponses() : await runImagesWithFallback(config, runImages, runResponses);
         refreshRemoteUser(config);
         return images;
     } catch (error) {

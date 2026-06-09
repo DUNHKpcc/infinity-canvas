@@ -132,8 +132,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生图接口</SettingTitle>
-                    <div className="grid grid-cols-2 gap-2.5">
-                        <OptionPill selected={(config.imageApiMode || "images") !== "responses"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "images")}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        <OptionPill selected={(config.imageApiMode || "auto") === "auto"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "auto")}>
+                            自动
+                        </OptionPill>
+                        <OptionPill selected={config.imageApiMode === "images"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "images")}>
                             图像接口
                         </OptionPill>
                         <OptionPill selected={config.imageApiMode === "responses"} theme={theme} onClick={() => setGlobalConfig("imageApiMode", "responses")}>
@@ -141,7 +144,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </OptionPill>
                     </div>
                     <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
-                        Codex 等不支持 /images 端点的渠道请选 Responses（走 /responses 接口）。
+                        自动：优先走图像接口，遇到 Codex 等仅支持 /responses 的渠道会自动改用 Responses 重试；也可手动锁定接口。
                     </div>
                 </div>
                 <div className="space-y-2.5">
