@@ -50,6 +50,37 @@ export function readImageMeta(dataUrl: string) {
     });
 }
 
+function loadImageElement(src: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("图片加载失败"));
+        image.src = src;
+    });
+}
+
+// compressImageToWebp 将任意图片居中裁剪为正方形并编码为 webp，用于头像等小图。
+export async function compressImageToWebp(file: Blob, options: { size?: number; quality?: number } = {}) {
+    const size = options.size ?? 256;
+    const quality = options.quality ?? 0.85;
+    const objectUrl = URL.createObjectURL(file);
+    try {
+        const image = await loadImageElement(objectUrl);
+        const side = Math.min(image.naturalWidth, image.naturalHeight) || size;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("当前浏览器不支持图片压缩");
+        ctx.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, size, size);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+        if (!blob) throw new Error("图片压缩失败");
+        return blob;
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+}
+
 export function dataUrlToFile(image: ReferenceImage) {
     const [header, content] = image.dataUrl.split(",", 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || image.type || "image/png";

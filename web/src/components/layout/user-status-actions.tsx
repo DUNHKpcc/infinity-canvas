@@ -1,14 +1,15 @@
 "use client";
 
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import { useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { Avatar, Dropdown, Tooltip } from "antd";
-import { BookOpen, Keyboard, LogOut, Monitor, Moon, Settings2, Shield, Sun } from "lucide-react";
+import { BookOpen, Keyboard, LogOut, Monitor, Moon, Settings2, Shield, Sun, User } from "lucide-react";
 import type { ItemType } from "antd/es/menu/interface";
 import Link from "next/link";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { GitHubLink } from "@/components/layout/github-link";
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
+import { UserDetailModal } from "@/components/layout/user-detail-modal";
 import { CreditSymbol } from "@/constant/credits";
 import { DOCS_URL } from "@/constant/env";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
     const user = useUserStore((state) => state.user);
     const logout = useUserStore((state) => state.clearSession);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const [detailOpen, setDetailOpen] = useState(false);
     const canvasTheme = canvasThemes[theme];
     const userName = user?.displayName || user?.username || "";
     const credits = user?.credits ?? 0;
@@ -47,6 +49,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
     const avatarStyle: CSSProperties | undefined = variant === "canvas" ? { borderColor: canvasTheme.toolbar.border, color: canvasTheme.node.text, background: "transparent" } : undefined;
     const menuItems: ItemType[] = [
         { key: "user", disabled: true, label: <span className="font-medium text-current">{userName}</span> },
+        { key: "detail", icon: <User className="size-4" />, label: "用户详情", onClick: () => setDetailOpen(true) },
         ...(user?.role === "admin" ? [{ key: "admin", icon: <Shield className="size-4" />, label: <Link href="/admin">管理后台</Link> }] : []),
         ...(onOpenShortcuts ? [{ key: "shortcuts", icon: <Keyboard className="size-4" />, label: "快捷键", onClick: onOpenShortcuts }] : []),
         { type: "divider" },
@@ -99,6 +102,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                             </Avatar>
                         </button>
                     </Dropdown>
+                    <UserDetailModal open={detailOpen} onClose={() => setDetailOpen(false)} />
                 </div>
             ) : null}
         </div>
@@ -123,7 +127,10 @@ function ThemePreferenceToggle({ preference, theme, onSelect, style }: { prefere
                         theme={theme}
                         targetTheme={targetTheme}
                         onThemeChange={() => onSelect(option.value)}
-                        className={cn("inline-flex size-7 items-center justify-center rounded-full transition [&_svg]:size-4", active ? "bg-white text-stone-900 shadow-sm dark:bg-stone-800 dark:text-white" : "text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100")}
+                        className={cn(
+                            "inline-flex size-7 items-center justify-center rounded-full transition [&_svg]:size-4",
+                            active ? "bg-white text-stone-900 shadow-sm dark:bg-stone-800 dark:text-white" : "text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100",
+                        )}
                         role="radio"
                         aria-checked={active}
                         aria-label={option.label}

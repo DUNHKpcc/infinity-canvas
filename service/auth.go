@@ -189,7 +189,10 @@ func LoginWithLinuxDo(r *http.Request, code string, state string) (model.AuthSes
 		return model.AuthSession{}, redirect, safeMessageError{message: "账号已被禁用"}
 	}
 	user.DisplayName = firstNonEmpty(profile.Name, user.DisplayName)
-	user.AvatarURL = firstNonEmpty(linuxDoAvatar(profile.AvatarTemplate), user.AvatarURL)
+	// 用户上传过自定义头像后，不再被 Linux.do 头像覆盖。
+	if !isInternalAvatarURL(user.AvatarURL) {
+		user.AvatarURL = firstNonEmpty(linuxDoAvatar(profile.AvatarTemplate), user.AvatarURL)
+	}
 	user.LastLoginAt = now()
 	user.UpdatedAt = now()
 	extra, _ := json.Marshal(userExtra{LinuxDo: profile})

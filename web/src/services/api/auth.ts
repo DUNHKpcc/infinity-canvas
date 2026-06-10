@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "@/services/api/request";
+import { apiGet, apiPost, apiUpload } from "@/services/api/request";
 
 export const AUTH_TOKEN_KEY = "infinite-canvas-auth-token-v1";
 
@@ -35,4 +35,10 @@ export async function register(payload: AuthPayload) {
 
 export async function fetchCurrentUser(token?: string) {
     return apiGet<AuthUser>("/api/auth/me", undefined, token);
+}
+
+export async function uploadAvatar(file: Blob, token?: string) {
+    const formData = new FormData();
+    formData.append("file", file, "avatar.webp");
+    return apiUpload<AuthUser>("/api/v1/user/avatar", formData, token);
 }

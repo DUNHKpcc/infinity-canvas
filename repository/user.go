@@ -79,6 +79,38 @@ func SaveUser(user model.User) (model.User, error) {
 	return user, db.Save(&user).Error
 }
 
+// SaveUserAvatar 新增一条用户头像记录。
+func SaveUserAvatar(avatar model.UserAvatar) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Create(&avatar).Error
+}
+
+// GetUserAvatar 根据 ID 查询用户头像。
+func GetUserAvatar(id string) (model.UserAvatar, bool, error) {
+	db, err := DB()
+	if err != nil {
+		return model.UserAvatar{}, false, err
+	}
+	avatar := model.UserAvatar{}
+	err = db.Where("id = ?", id).First(&avatar).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.UserAvatar{}, false, nil
+	}
+	return avatar, err == nil, err
+}
+
+// DeleteOtherUserAvatars 删除用户除 keepID 外的历史头像，避免旧头像残留。
+func DeleteOtherUserAvatars(userID string, keepID string) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Where("user_id = ? AND id <> ?", userID, keepID).Delete(&model.UserAvatar{}).Error
+}
+
 func ConsumeUserCredits(id string, credits int, now string) (model.User, bool, error) {
 	db, err := DB()
 	if err != nil {

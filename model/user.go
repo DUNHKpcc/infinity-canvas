@@ -44,6 +44,16 @@ type UserList struct {
 	Total int    `json:"total"`
 }
 
+// UserAvatar 用户自定义头像，二进制按 webp 存库。
+type UserAvatar struct {
+	ID        string `json:"id" gorm:"primaryKey"`
+	UserID    string `json:"userId" gorm:"index"`
+	MimeType  string `json:"mimeType"`
+	Data      []byte `json:"-"`
+	Bytes     int    `json:"bytes"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // AuthUser 用户公开信息。
 type AuthUser struct {
 	ID          string   `json:"id"`
