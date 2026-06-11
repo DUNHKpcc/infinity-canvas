@@ -207,10 +207,19 @@ func SelectModelChannel(modelName string) (model.ModelChannel, error) {
 	}
 	total := 0
 	for _, channel := range channels {
-		total += channel.Weight
+		if channel.Weight > 0 {
+			total += channel.Weight
+		}
+	}
+	// 所有渠道权重均为 0/未配置时 total 为 0，退化为均匀随机，避免 rand.Intn(0) panic。
+	if total <= 0 {
+		return channels[rand.Intn(len(channels))], nil
 	}
 	hit := rand.Intn(total)
 	for _, channel := range channels {
+		if channel.Weight <= 0 {
+			continue
+		}
 		hit -= channel.Weight
 		if hit < 0 {
 			return channel, nil

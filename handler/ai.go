@@ -54,13 +54,14 @@ func proxyAIGetRequest(w http.ResponseWriter, r *http.Request, path string) {
 	channel, err := service.SelectModelChannel(modelName)
 	if err != nil {
 		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, fmt.Sprintf("模型「%s」暂无可用渠道（%v），请在后台为该模型配置并启用渠道", modelName, err))
 		return
 	}
 	path = resolveAIProxyPath(channel.BaseURL, modelName, path)
 	request, err := http.NewRequest(http.MethodGet, service.BuildModelChannelURL(channel, path), nil)
 	if err != nil {
-		Fail(w, "AI 接口请求失败")
+		log.Printf("AI proxy build request failed: model=%s err=%v", modelName, err)
+		Fail(w, "构建上游请求失败，请检查该模型渠道的 BaseURL 配置是否正确")
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
@@ -71,7 +72,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 	body, contentType, modelName, err := readAIRequest(r)
 	if err != nil {
 		log.Printf("AI proxy request read failed: %v", err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, "解析生成请求失败："+err.Error())
 		return
 	}
 	user, ok := service.UserFromContext(r.Context())
@@ -82,21 +83,21 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 	credits, err := service.ModelCost(modelName)
 	if err != nil {
 		log.Printf("AI proxy read model cost failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, fmt.Sprintf("读取模型「%s」计费配置失败（%v），请在后台检查该模型的计费设置", modelName, err))
 		return
 	}
 	credits *= readAIRequestCount(body, contentType)
 	channel, err := service.SelectModelChannel(modelName)
 	if err != nil {
 		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, fmt.Sprintf("模型「%s」暂无可用渠道（%v），请在后台为该模型配置并启用渠道", modelName, err))
 		return
 	}
 	path = resolveAIProxyPath(channel.BaseURL, modelName, path)
 	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, path), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, path), err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, "构建上游请求失败，请检查该模型渠道的 BaseURL 配置是否正确")
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
@@ -121,7 +122,7 @@ func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func
 		if onFailure != nil {
 			onFailure()
 		}
-		Fail(w, "AI 接口请求失败")
+		Fail(w, aiConnectErrorMessage(err))
 		return
 	}
 	defer response.Body.Close()
@@ -266,6 +267,15 @@ func isArkSeedanceVideo(baseURL string, modelName string) bool {
 	return strings.Contains(model, "seedance") || strings.Contains(model, "doubao-seedance") || strings.Contains(base, "/api/plan/v3")
 }
 
+// aiConnectErrorMessage 区分上游连接超时与其他连接失败。只读取 Timeout() 布尔值，
+// 不嵌入原始 err 文本（其中含上游 host，属机密，已写入日志）。
+func aiConnectErrorMessage(err error) string {
+	if timeout, ok := err.(interface{ Timeout() bool }); ok && timeout.Timeout() {
+		return "连接上游 AI 服务超时，请稍后重试（可能上游响应过慢或网络不稳定）"
+	}
+	return "无法连接上游 AI 服务，请稍后重试，或在后台检查该模型渠道的网络与 BaseURL 配置"
+}
+
 func aiStatusMessage(statusCode int) string {
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -273,7 +283,7 @@ func aiStatusMessage(statusCode int) string {
 	case http.StatusTooManyRequests:
 		return "AI 接口限流或额度不足，请稍后重试或检查额度"
 	default:
-		return "AI 接口请求失败"
+		return fmt.Sprintf("上游 AI 服务返回错误（HTTP %d）", statusCode)
 	}
 }
 
