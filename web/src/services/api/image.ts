@@ -156,16 +156,29 @@ function readAxiosError(error: unknown, fallback: string) {
 function readStatusError(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
-    return status ? `${fallback}：${status}` : fallback;
+    // No status means the request never got an HTTP response — network/timeout/offline, not a server reply.
+    if (!status) return "网络异常或服务无响应，请检查网络连接后重试";
+    if (status >= 500) return `服务暂时不可用（HTTP ${status}），请稍后重试`;
+    return `${fallback}：${status}`;
+}
+
+/** SSE separates events with a blank line, which per spec may be CRLF, LF, or CR — split on any of them. */
+const SSE_BLOCK_SEPARATOR = /\r\n\r\n|\n\n|\r\r/;
+
+/** True when raw text is an SSE stream (starts with an `event:`/`data:`/comment line) rather than JSON. */
+function looksLikeEventStream(text: string) {
+    const head = text.trimStart();
+    return head.startsWith("event:") || head.startsWith("data:") || head.startsWith(":");
 }
 
 function parseStreamChunk(chunk: string, onDelta: (value: string) => void) {
     let deltaText = "";
-    for (const eventBlock of chunk.split("\n\n")) {
+    for (const eventBlock of chunk.split(SSE_BLOCK_SEPARATOR)) {
         const data = eventBlock
             .split("\n")
             .find((line) => line.startsWith("data: "))
-            ?.slice(6);
+            ?.slice(6)
+            .trimEnd();
         if (!data || data === "[DONE]") continue;
         const delta = (JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content || "";
         deltaText += delta;
@@ -208,11 +221,12 @@ function collectCompletedImages(payload: Record<string, unknown>): ParsedImage[]
 
 /** Parse one "\n\n"-delimited SSE block from the image stream, emitting 0..n image events. */
 function parseImageStreamChunk(chunk: string, onEvent: (event: ImageStreamEvent) => void) {
-    for (const block of chunk.split("\n\n")) {
+    for (const block of chunk.split(SSE_BLOCK_SEPARATOR)) {
         const data = block
             .split("\n")
             .find((line) => line.startsWith("data: "))
-            ?.slice(6);
+            ?.slice(6)
+            .trimEnd();
         if (!data || data === "[DONE]") continue;
         let payload: Record<string, unknown>;
         try {
@@ -273,7 +287,7 @@ async function runImageStream(url: string, body: unknown, headers: Record<string
             const responseText = String(event.event?.target?.responseText || "");
             buffer += responseText.slice(processedLength);
             processedLength = responseText.length;
-            const chunks = buffer.split("\n\n");
+            const chunks = buffer.split(SSE_BLOCK_SEPARATOR);
             buffer = chunks.pop() || "";
             for (const chunk of chunks) parse(chunk, handle);
         },
@@ -282,9 +296,19 @@ async function runImageStream(url: string, body: unknown, headers: Record<string
 
     if (streamError) throw new Error(streamError);
     if (completed.length) return completed;
-    // Fallback: upstream ignored stream and returned a plain JSON payload.
-    if (!sawEvent && typeof response.data === "string") {
-        return parseJsonFallback(JSON.parse(response.data));
+    // onDownloadProgress doesn't always deliver chunks incrementally; the full body lives in
+    // response.data. Re-parse it as a last resort before failing.
+    if (!sawEvent && typeof response.data === "string" && response.data.trim()) {
+        const raw = response.data;
+        if (looksLikeEventStream(raw)) {
+            // SSE body that incremental parsing missed (e.g. CRLF separators or a one-shot delivery).
+            for (const chunk of raw.split(SSE_BLOCK_SEPARATOR)) parse(chunk, handle);
+            if (streamError) throw new Error(streamError);
+            if (completed.length) return completed;
+        } else {
+            // Upstream ignored `stream` and returned a plain JSON payload.
+            return parseJsonFallback(JSON.parse(raw));
+        }
     }
     throw new Error("接口没有返回图片");
 }
@@ -328,11 +352,12 @@ function parseResponsesImagePayload(payload: unknown): ParsedImage[] {
 
 /** Parse one SSE block from a Responses-API image stream. */
 function parseResponsesStreamChunk(chunk: string, onEvent: (event: ImageStreamEvent) => void) {
-    for (const block of chunk.split("\n\n")) {
+    for (const block of chunk.split(SSE_BLOCK_SEPARATOR)) {
         const data = block
             .split("\n")
             .find((line) => line.startsWith("data: "))
-            ?.slice(6);
+            ?.slice(6)
+            .trimEnd();
         if (!data || data === "[DONE]") continue;
         let payload: Record<string, unknown>;
         try {
