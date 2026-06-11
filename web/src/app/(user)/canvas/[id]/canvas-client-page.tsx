@@ -241,6 +241,7 @@ function InfiniteCanvasPage() {
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
@@ -1403,9 +1404,19 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt } } : node)));
     }, []);
 
-    const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
-    }, []);
+    const handleConfigNodeChange = useCallback(
+        (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
+            setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
+            // Mirror the change into the global config so future new nodes inherit the last-used settings.
+            const node = nodesRef.current.find((item) => item.id === nodeId);
+            if (node) {
+                for (const [key, value] of Object.entries(globalConfigFromNodePatch(node.type, patch || {}))) {
+                    updateConfig(key as keyof AiConfig, value as AiConfig[keyof AiConfig]);
+                }
+            }
+        },
+        [updateConfig],
+    );
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
@@ -2890,6 +2901,31 @@ async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
 
 function getGenerationCount(count: string) {
     return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
+}
+
+// Map a node-level config patch back to the global AiConfig keys, so editing a node's settings
+// updates the defaults that new nodes seed from. Node metadata and AiConfig use different key
+// names in places (seconds↔videoSeconds, count↔canvasImageCount), hence the explicit mapping.
+function globalConfigFromNodePatch(type: CanvasNodeType, patch: NonNullable<CanvasNodeData["metadata"]>): Partial<AiConfig> {
+    const next: Partial<AiConfig> = {};
+    if (typeof patch.model === "string") {
+        if (type === CanvasNodeType.Video) next.videoModel = patch.model;
+        else if (type === CanvasNodeType.Audio) next.audioModel = patch.model;
+        else if (type === CanvasNodeType.Text) next.textModel = patch.model;
+        else next.imageModel = patch.model; // Image / Config nodes generate images
+    }
+    if (typeof patch.size === "string") next.size = patch.size;
+    if (typeof patch.quality === "string") next.quality = patch.quality;
+    if (typeof patch.count === "number") next.canvasImageCount = String(patch.count);
+    if (typeof patch.seconds === "string") next.videoSeconds = patch.seconds;
+    if (typeof patch.vquality === "string") next.vquality = patch.vquality;
+    if (typeof patch.generateAudio === "string") next.videoGenerateAudio = patch.generateAudio;
+    if (typeof patch.watermark === "string") next.videoWatermark = patch.watermark;
+    if (typeof patch.audioVoice === "string") next.audioVoice = patch.audioVoice;
+    if (typeof patch.audioFormat === "string") next.audioFormat = patch.audioFormat;
+    if (typeof patch.audioSpeed === "string") next.audioSpeed = patch.audioSpeed;
+    if (typeof patch.audioInstructions === "string") next.audioInstructions = patch.audioInstructions;
+    return next;
 }
 
 function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
